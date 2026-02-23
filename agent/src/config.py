@@ -19,14 +19,20 @@ class Config:
         self.cloudwatch_namespaces = os.getenv("CLOUDWATCH_NAMESPACES", "").split(",")
         self.collection_interval = int(os.getenv("COLLECTION_INTERVAL", "60"))
 
-        # Jira Configuration
-        self.jira_url = os.getenv("JIRA_URL", "")
-        self.jira_email = os.getenv("JIRA_EMAIL", "")
-        self.jira_api_token = os.getenv("JIRA_API_TOKEN", "")
-        self.jira_project = os.getenv("JIRA_PROJECT", "OPS")
+        # ServiceNow Configuration
+        self.servicenow_instance = os.getenv("SERVICENOW_INSTANCE", "")
+        self.servicenow_username = os.getenv("SERVICENOW_USERNAME", "")
+        self.servicenow_password = os.getenv("SERVICENOW_PASSWORD", "")
+        self.servicenow_assignment_group = os.getenv("SERVICENOW_ASSIGNMENT_GROUP", "")
+        self.servicenow_caller_id = os.getenv("SERVICENOW_CALLER_ID", "")
 
         # OpenSearch Configuration
         self.opensearch_endpoint = os.getenv("OPENSEARCH_ENDPOINT", "")
+
+        # S3 RAG Data Configuration
+        self.rag_s3_bucket = os.getenv("RAG_S3_BUCKET", "")
+        self.rag_s3_runbooks_prefix = os.getenv("RAG_S3_RUNBOOKS_PREFIX", "runbooks/")
+        self.rag_s3_case_history_prefix = os.getenv("RAG_S3_CASE_HISTORY_PREFIX", "case-history/")
 
         # Notification Configuration
         self.sns_topic_arn = os.getenv("SNS_TOPIC_ARN", "")
@@ -50,12 +56,13 @@ class Config:
                 "logs": {"enabled": True},
                 "insights": {"enabled": True},
             },
-            "jira": {
-                "enabled": bool(self.jira_url and self.jira_email),
-                "url": self.jira_url,
-                "email": self.jira_email,
-                "api_token": self.jira_api_token,
-                "project": self.jira_project,
+            "servicenow": {
+                "enabled": bool(self.servicenow_instance and self.servicenow_username),
+                "instance": self.servicenow_instance,
+                "username": self.servicenow_username,
+                "password": self.servicenow_password,
+                "assignment_group": self.servicenow_assignment_group,
+                "caller_id": self.servicenow_caller_id,
             },
             "notifications": {
                 "enabled": bool(self.sns_topic_arn),
@@ -66,6 +73,13 @@ class Config:
             "rag": {
                 "opensearch_endpoint": self.opensearch_endpoint,
                 "region": self.region,
+            },
+            "s3_rag": {
+                "enabled": bool(self.rag_s3_bucket),
+                "bucket": self.rag_s3_bucket,
+                "region": self.region,
+                "runbooks_prefix": self.rag_s3_runbooks_prefix,
+                "case_history_prefix": self.rag_s3_case_history_prefix,
             },
         }
 

@@ -14,8 +14,8 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 from .collectors import CollectorManager, CloudWatchEvent
 from .processors import AnomalyDetector, SeverityClassifier
-from .integrations import JiraIntegration, NotificationService
-from .rag import RAGRetriever
+from .integrations import ServiceNowIntegration, NotificationService
+from .rag import RAGRetriever, S3RAGSync
 from .models import Incident, IncidentStatus, Priority
 
 
@@ -51,7 +51,7 @@ class MonitoringAgent:
     2. Retrieve relevant context (runbooks, history)
     3. Detect anomalies using AI
     4. Classify incidents by severity (P1-P6)
-    5. Create Jira tickets
+    5. Create ServiceNow incidents
     6. Send notifications (for P1-P3, summary for P4-P6)
     7. Store for learning
     """
@@ -70,9 +70,10 @@ class MonitoringAgent:
         self.collector_manager = CollectorManager(config)
         self.anomaly_detector = AnomalyDetector(config)
         self.classifier = SeverityClassifier(config)
-        self.jira = JiraIntegration(config.get("jira", {}))
+        self.servicenow = ServiceNowIntegration(config.get("servicenow", {}))
         self.notifications = NotificationService(config.get("notifications", {}))
         self.rag = RAGRetriever(config.get("rag", {}))
+        self.s3_sync = S3RAGSync(config.get("s3_rag", {}), self.rag)
 
         # Initialize LLM for analysis
         self.llm = ChatBedrock(
@@ -218,22 +219,22 @@ class MonitoringAgent:
         return state
 
     async def _create_tickets_node(self, state: AgentState) -> AgentState:
-        """Create Jira tickets for incidents."""
+        """Create ServiceNow incidents for monitoring alerts."""
         state["current_step"] = "create_tickets"
         state["tickets_created"] = []
 
         for incident in state.get("incidents", []):
             try:
-                result = await self.jira.create_ticket(incident)
+                result = await self.servicenow.create_ticket(incident)
                 if result:
                     state["tickets_created"].append({
                         "incident_id": incident.incident_id,
                         "ticket_key": result.get("key"),
                         "auto_closed": result.get("auto_closed", False),
                     })
-                    print(f"Created ticket {result.get('key')} for incident {incident.incident_id}")
+                    print(f"Created ServiceNow incident {result.get('key')} for {incident.incident_id}")
             except Exception as e:
-                print(f"Ticket creation error: {e}")
+                print(f"ServiceNow incident creation error: {e}")
 
         return state
 
@@ -341,14 +342,17 @@ class MonitoringAgent:
         # Test anomaly detector (Bedrock)
         results["anomaly_detector"] = await self.anomaly_detector.test_connection()
 
-        # Test Jira
-        results["jira"] = await self.jira.test_connection()
+        # Test ServiceNow
+        results["servicenow"] = await self.servicenow.test_connection()
 
         # Test notifications
         results["notifications"] = await self.notifications.test_connection()
 
-        # Test RAG
+        # Test RAG (OpenSearch)
         results["rag"] = await self.rag.test_connection()
+
+        # Test S3 RAG Storage
+        results["s3_rag"] = await self.s3_sync.test_connection()
 
         return results
 

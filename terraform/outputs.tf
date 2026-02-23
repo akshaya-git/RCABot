@@ -92,9 +92,28 @@ output "ecr_repository_arn" {
 # Secrets Manager Outputs
 # =============================================================================
 
-output "jira_credentials_secret_arn" {
-  description = "ARN of the secret containing Jira credentials"
-  value       = aws_secretsmanager_secret.jira_credentials.arn
+output "servicenow_credentials_secret_arn" {
+  description = "ARN of the secret containing ServiceNow credentials"
+  value       = aws_secretsmanager_secret.servicenow_credentials.arn
+}
+
+# =============================================================================
+# S3 RAG Data Outputs
+# =============================================================================
+
+output "rag_s3_bucket_name" {
+  description = "Name of the S3 bucket for RAG data"
+  value       = aws_s3_bucket.rag_data.id
+}
+
+output "rag_s3_bucket_arn" {
+  description = "ARN of the S3 bucket for RAG data"
+  value       = aws_s3_bucket.rag_data.arn
+}
+
+output "rag_sync_sns_topic_arn" {
+  description = "ARN of the SNS topic for RAG sync notifications"
+  value       = aws_sns_topic.rag_sync.arn
 }
 
 # =============================================================================
@@ -132,5 +151,6 @@ output "summary" {
     opensearch_endpoint = aws_opensearch_domain.main.endpoint
     ecr_repository      = aws_ecr_repository.agent.repository_url
     sns_topic           = aws_sns_topic.alerts.arn
+    rag_s3_bucket       = aws_s3_bucket.rag_data.id
   }
 }

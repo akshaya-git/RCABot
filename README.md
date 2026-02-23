@@ -1,13 +1,13 @@
 # Proactive Monitoring Bot
 
-An AI-powered monitoring solution that continuously monitors AWS CloudWatch for anomalies and incidents, automatically classifies them by severity (P1-P6), creates Jira tickets, and learns from historical data.
+An AI-powered monitoring solution that continuously monitors AWS CloudWatch for anomalies and incidents, automatically classifies them by severity (P1-P6), creates ServiceNow incidents, and learns from historical data.
 
 ## Features
 
 - **CloudWatch Monitoring**: Collects alarms, metrics, logs, and log insights
 - **AI-Powered Analysis**: Uses Amazon Bedrock (Claude) for anomaly detection
 - **Severity Classification**: Automatically classifies incidents P1-P6
-- **Jira Integration**: Creates and manages tickets based on severity
+- **ServiceNow Integration**: Creates and manages incidents based on severity
 - **Smart Notifications**: Email alerts via SNS/SES based on priority
 - **Continuous Learning**: RAG-based learning from runbooks and case history
 - **EKS Deployment**: Runs on Amazon EKS with full Terraform automation
@@ -20,7 +20,7 @@ An AI-powered monitoring solution that continuously monitors AWS CloudWatch for 
 - Terraform >= 1.0
 - Docker
 - kubectl
-- Jira Cloud account with API access
+- ServiceNow instance with API access
 
 ### Deploy
 
@@ -50,12 +50,25 @@ curl http://localhost:8080/test/connections
 
 See [docs/Architecture.md](docs/Architecture.md) for detailed architecture documentation.
 
+## RAG Setup (Runbooks & Learning)
+
+See [docs/RAG-Setup-Guide.md](docs/RAG-Setup-Guide.md) for how to upload your runbooks.
+
+**Quick start:**
+```bash
+# Upload your runbooks to S3
+aws s3 sync ./your-runbooks/ s3://YOUR-BUCKET/runbooks/
+
+# Import to the system
+./scripts/import-rag-data.sh
+```
+
 ```
 CloudWatch  -->  Collectors  -->  Anomaly Detector  -->  Classifier (P1-P6)
                      |                  |                      |
                      v                  v                      v
-                OpenSearch <------ Bedrock (Claude) ---->  Jira + Notifications
-                (RAG/History)                              (Tickets + Alerts)
+                OpenSearch <------ Bedrock (Claude) ---->  ServiceNow + Notifications
+                (RAG/History)                              (Incidents + Alerts)
 ```
 
 ## Severity Levels
@@ -82,6 +95,14 @@ CloudWatch  -->  Collectors  -->  Anomaly Detector  -->  Classifier (P1-P6)
 | `/runbooks` | POST | Index runbook |
 | `/runbooks/search` | GET | Search runbooks |
 | `/test/connections` | GET | Test all connections |
+| `/s3/status` | GET | S3 RAG sync status |
+| `/s3/runbooks` | GET | List S3 runbooks |
+| `/s3/runbooks` | POST | Upload runbook to S3 |
+| `/s3/sync/runbooks` | POST | Sync runbooks from S3 |
+| `/s3/sync/case-history` | POST | Sync case history from S3 |
+| `/s3/sync/all` | POST | Bulk import all from S3 |
+| `/extract/runbook` | POST | Extract schema from raw text |
+| `/extract/runbook/index` | POST | Extract and index raw runbook |
 
 ## Configuration
 
@@ -93,12 +114,16 @@ CloudWatch  -->  Collectors  -->  Anomaly Detector  -->  Classifier (P1-P6)
 | `BEDROCK_MODEL_ID` | Claude model ID | No |
 | `CLOUDWATCH_NAMESPACES` | Namespaces to monitor | No |
 | `COLLECTION_INTERVAL` | Polling interval (seconds) | No |
-| `JIRA_URL` | Jira instance URL | Yes |
-| `JIRA_EMAIL` | Jira service email | Yes |
-| `JIRA_API_TOKEN` | Jira API token | Yes |
-| `JIRA_PROJECT` | Default project key | Yes |
+| `SERVICENOW_INSTANCE` | ServiceNow instance name | Yes |
+| `SERVICENOW_USERNAME` | ServiceNow service account | Yes |
+| `SERVICENOW_PASSWORD` | ServiceNow password | Yes |
+| `SERVICENOW_ASSIGNMENT_GROUP` | Assignment group (optional) | No |
+| `SERVICENOW_CALLER_ID` | Caller sys_id (optional) | No |
 | `OPENSEARCH_ENDPOINT` | OpenSearch endpoint | Yes |
 | `SNS_TOPIC_ARN` | SNS topic for alerts | Yes |
+| `RAG_S3_BUCKET` | S3 bucket for RAG data | Yes |
+| `RAG_S3_RUNBOOKS_PREFIX` | S3 prefix for runbooks | No |
+| `RAG_S3_CASE_HISTORY_PREFIX` | S3 prefix for case history | No |
 
 ### Terraform Variables
 
@@ -126,7 +151,7 @@ pro-acti-moni-bot/
 │   │   ├── config.py        # Configuration
 │   │   ├── collectors/      # CloudWatch collectors
 │   │   ├── processors/      # Anomaly & classification
-│   │   ├── integrations/    # Jira & notifications
+│   │   ├── integrations/    # ServiceNow & notifications
 │   │   ├── rag/            # RAG retriever
 │   │   └── models/         # Data models
 │   └── manifests/          # Kubernetes manifests

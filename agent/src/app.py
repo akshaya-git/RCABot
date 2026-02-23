@@ -23,6 +23,18 @@ class RunbookRequest(BaseModel):
     steps: list = []
 
 
+class RawRunbookRequest(BaseModel):
+    """Request for uploading raw/unstructured runbook content."""
+    content: str
+    filename: Optional[str] = None
+
+
+class RawCaseHistoryRequest(BaseModel):
+    """Request for uploading raw/unstructured case history content."""
+    content: str
+    incident_id: Optional[str] = None
+
+
 class IncidentResolveRequest(BaseModel):
     resolution: str
 
@@ -59,7 +71,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Proactive Monitoring Agent",
-    description="AI-powered CloudWatch monitoring with Jira integration",
+    description="AI-powered CloudWatch monitoring with ServiceNow integration",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -194,15 +206,245 @@ async def test_collectors():
     return results
 
 
-@app.get("/test/jira")
-async def test_jira():
-    """Test Jira connection."""
+@app.get("/test/servicenow")
+async def test_servicenow():
+    """Test ServiceNow connection."""
     if agent is None:
         raise HTTPException(503, "Agent not initialized")
 
-    result = await agent.jira.test_connection()
+    result = await agent.servicenow.test_connection()
     return result
 
+
+# =============================================================================
+# S3 RAG Sync Endpoints
+# =============================================================================
+
+@app.get("/s3/status")
+async def s3_status():
+    """Get S3 RAG sync status."""
+    if agent is None:
+        raise HTTPException(503, "Agent not initialized")
+
+    status = await agent.s3_sync.get_sync_status()
+    return status
+
+
+@app.get("/s3/runbooks")
+async def list_s3_runbooks():
+    """List runbooks stored in S3."""
+    if agent is None:
+        raise HTTPException(503, "Agent not initialized")
+
+    runbooks = await agent.s3_sync.list_s3_runbooks()
+    return {"runbooks": runbooks, "count": len(runbooks)}
+
+
+@app.post("/s3/sync/runbooks")
+async def sync_runbooks_from_s3(force: bool = False):
+    """
+    Sync all runbooks from S3 to OpenSearch.
+
+    Args:
+        force: If True, re-index all runbooks regardless of version
+    """
+    if agent is None:
+        raise HTTPException(503, "Agent not initialized")
+
+    results = await agent.s3_sync.sync_runbooks_from_s3(force=force)
+    return results
+
+
+@app.post("/s3/sync/case-history")
+async def sync_case_history_from_s3():
+    """Sync case history from S3 to OpenSearch."""
+    if agent is None:
+        raise HTTPException(503, "Agent not initialized")
+
+    results = await agent.s3_sync.sync_case_history_from_s3()
+    return results
+
+
+@app.post("/s3/sync/all")
+async def bulk_import_from_s3(source_prefix: Optional[str] = None):
+    """
+    Bulk import all RAG data from S3 to OpenSearch.
+
+    This imports:
+    - All runbooks from runbooks/ prefix
+    - All case history from case-history/ prefix
+    - Any additional data from the specified source_prefix
+    """
+    if agent is None:
+        raise HTTPException(503, "Agent not initialized")
+
+    results = await agent.s3_sync.bulk_import(source_prefix=source_prefix)
+    return results
+
+
+@app.post("/s3/runbooks")
+async def upload_runbook_to_s3(runbook: RunbookRequest, filename: Optional[str] = None):
+    """
+    Upload a runbook to S3 and index to OpenSearch.
+
+    This stores the runbook in S3 (source of truth) and indexes it to OpenSearch.
+    """
+    if agent is None:
+        raise HTTPException(503, "Agent not initialized")
+
+    result = await agent.s3_sync.upload_runbook(runbook.dict(), filename=filename)
+    return result
+
+
+@app.get("/test/s3")
+async def test_s3():
+    """Test S3 connection."""
+    if agent is None:
+        raise HTTPException(503, "Agent not initialized")
+
+    result = await agent.s3_sync.test_connection()
+    return result
+
+
+# =============================================================================
+# Extraction Endpoints (for unstructured data)
+# =============================================================================
+
+@app.post("/extract/runbook")
+async def extract_runbook(request: RawRunbookRequest):
+    """
+    Extract structured runbook data from raw/unstructured content.
+
+    Uses LLM to parse unstructured text (markdown, plain text, etc.)
+    and extract: title, content, category, keywords, steps.
+
+    The extracted data follows the runbook schema.
+    """
+    if agent is None:
+        raise HTTPException(503, "Agent not initialized")
+
+    extracted = await agent.s3_sync.extractor.extract_runbook(
+        request.content,
+        request.filename
+    )
+
+    return {
+        "success": True,
+        "extracted": extracted,
+        "extraction_failed": extracted.get("_extraction_failed", False),
+    }
+
+
+@app.post("/extract/runbook/index")
+async def extract_and_index_runbook(request: RawRunbookRequest):
+    """
+    Extract structured data from raw runbook content AND index to OpenSearch.
+
+    Combines extraction + indexing in one step.
+    """
+    if agent is None:
+        raise HTTPException(503, "Agent not initialized")
+
+    # Extract structured data
+    extracted = await agent.s3_sync.extractor.extract_runbook(
+        request.content,
+        request.filename
+    )
+
+    # Index to OpenSearch
+    indexed = await agent.rag.index_runbook(extracted)
+
+    return {
+        "success": indexed,
+        "extracted": extracted,
+        "indexed": indexed,
+    }
+
+
+@app.post("/extract/case-history")
+async def extract_case_history(request: RawCaseHistoryRequest):
+    """
+    Extract structured case history from raw incident documentation.
+
+    Uses LLM to parse post-mortems, incident reports, etc.
+    and extract: title, description, root_cause, resolution, etc.
+    """
+    if agent is None:
+        raise HTTPException(503, "Agent not initialized")
+
+    extracted = await agent.s3_sync.extractor.extract_case_history(
+        request.content,
+        request.incident_id
+    )
+
+    return {
+        "success": True,
+        "extracted": extracted,
+        "extraction_failed": extracted.get("_extraction_failed", False),
+    }
+
+
+@app.post("/extract/case-history/index")
+async def extract_and_index_case_history(request: RawCaseHistoryRequest):
+    """
+    Extract structured data from raw case history AND index to OpenSearch.
+    """
+    if agent is None:
+        raise HTTPException(503, "Agent not initialized")
+
+    # Extract structured data
+    extracted = await agent.s3_sync.extractor.extract_case_history(
+        request.content,
+        request.incident_id
+    )
+
+    # Index to OpenSearch
+    indexed = await agent.rag.index_incident(extracted)
+
+    return {
+        "success": indexed,
+        "extracted": extracted,
+        "indexed": indexed,
+    }
+
+
+@app.post("/s3/raw/upload")
+async def upload_raw_to_s3(request: RawRunbookRequest, doc_type: str = "runbook"):
+    """
+    Upload raw/unstructured content to S3 raw/ prefix.
+
+    Files in the raw/ prefix are automatically extracted during sync.
+    """
+    if agent is None:
+        raise HTTPException(503, "Agent not initialized")
+
+    if not agent.s3_sync.bucket:
+        raise HTTPException(400, "S3 bucket not configured")
+
+    try:
+        filename = request.filename or f"raw-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
+        prefix = agent.s3_sync.raw_prefix if doc_type == "runbook" else f"raw-cases/"
+        key = f"{prefix}{filename}"
+
+        agent.s3_sync.s3_client.put_object(
+            Bucket=agent.s3_sync.bucket,
+            Key=key,
+            Body=request.content,
+            ContentType="text/plain",
+        )
+
+        return {
+            "success": True,
+            "s3_key": key,
+            "s3_uri": f"s3://{agent.s3_sync.bucket}/{key}",
+            "message": "File uploaded. Run /s3/sync/runbooks to extract and index.",
+        }
+
+    except Exception as e:
+        raise HTTPException(500, f"Upload failed: {e}")
+
+
+from datetime import datetime
 
 if __name__ == "__main__":
     import uvicorn

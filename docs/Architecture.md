@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-The Proactive Monitoring Bot is an AI-powered solution that continuously monitors AWS CloudWatch for anomalies and incidents across compute, storage, and other AWS resources. It automatically classifies incidents by severity, creates Jira tickets, and leverages historical runbooks and case data to provide intelligent recommendations and continuously improve its detection capabilities.
+The Proactive Monitoring Bot is an AI-powered solution that continuously monitors AWS CloudWatch for anomalies and incidents across compute, storage, and other AWS resources. It automatically classifies incidents by severity, creates ServiceNow incidents, and leverages historical runbooks and case data to provide intelligent recommendations and continuously improve its detection capabilities.
 
 ## Solution Overview
 
@@ -38,8 +38,8 @@ The Proactive Monitoring Bot is an AI-powered solution that continuously monitor
 |  |  |           | Ticket      |          |  |    +-----------------------------+  |
 |  |  |           | Manager     |          |  |                                     |
 |  |  |           +------+------+          |  |    +-----------------------------+  |
-|  |  |                  |                 |  |    |         Jira Cloud          |  |
-|  |  +------------------|--+   +----------+--------->  Create/Update Tickets   |  |
+|  |  |                  |                 |  |    |        ServiceNow           |  |
+|  |  +------------------|--+   +----------+--------->  Create/Update Incidents  |  |
 |  +---------------------|--+---+----------+  |    +-----------------------------+  |
 |                        |                    |                                     |
 |                 +------v------+             |    +-----------------------------+  |
@@ -86,9 +86,9 @@ Classifies incidents into priority levels:
 
 | Priority | Severity | Criteria | Action |
 |----------|----------|----------|--------|
-| **P1** | Critical | Production down, data loss risk | Create Jira ticket, immediate alert |
-| **P2** | High | Major feature impacted, degraded service | Create Jira ticket, urgent alert |
-| **P3** | Medium | Minor feature impacted, workaround available | Create Jira ticket, standard alert |
+| **P1** | Critical | Production down, data loss risk | Create ServiceNow incident, immediate alert |
+| **P2** | High | Major feature impacted, degraded service | Create ServiceNow incident, urgent alert |
+| **P3** | Medium | Minor feature impacted, workaround available | Create ServiceNow incident, standard alert |
 | **P4** | Low | Minimal impact, non-critical | Create ticket, log, close, notify |
 | **P5** | Very Low | Informational, potential issue | Create ticket, log, close, notify |
 | **P6** | Trivial | Cosmetic, no impact | Create ticket, log, close, notify |
@@ -123,7 +123,7 @@ Orchestrates the monitoring workflow using LangGraph:
      +--------+---------+          +--------+---------+
               |                             |
      +--------v---------+          +--------v---------+
-     | Create Jira      |          | Create Jira      |
+     | Create ServiceNow|          | Create ServiceNow|
      | Ticket (Open)    |          | Ticket           |
      +--------+---------+          +--------+---------+
               |                             |
@@ -202,7 +202,7 @@ The system improves over time through:
                                 │
 4. ACTION PHASE                 ▼
                     ┌───────────────────────┐
-                    │   Jira Integration    │
+                    │ ServiceNow Integration│
                     │   Create/Update/Close │
                     └───────────┬───────────┘
                                 │
@@ -250,7 +250,7 @@ The system improves over time through:
 │                                                                              │
 │  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐                 │
 │  │ IAM Roles      │  │ Secrets Manager│  │ CloudWatch     │                 │
-│  │ - EKS Role     │  │ - Jira Creds   │  │ - Agent Logs   │                 │
+│  │ - EKS Role     │  │ - SNOW Creds   │  │ - Agent Logs   │                 │
 │  │ - Node Role    │  │ - API Keys     │  │ - Metrics      │                 │
 │  │ - IRSA Role    │  └────────────────┘  └────────────────┘                 │
 │  └────────────────┘                                                          │
@@ -267,7 +267,7 @@ The system improves over time through:
 | **Cache** | Redis | Session state, rate limiting |
 | **Container Orchestration** | Amazon EKS | Agent deployment |
 | **Infrastructure** | Terraform | IaC deployment |
-| **Ticketing** | Jira Cloud | Incident management |
+| **Ticketing** | ServiceNow | Incident management |
 | **Notifications** | Amazon SES/SNS | Email alerts |
 | **Monitoring Source** | CloudWatch | Metrics, logs, alarms |
 
@@ -286,10 +286,11 @@ The system improves over time through:
 | Variable | Description | Required |
 |----------|-------------|----------|
 | `AWS_REGION` | AWS region for deployment | Yes |
-| `JIRA_URL` | Jira instance URL | Yes |
-| `JIRA_PROJECT` | Default Jira project key | Yes |
-| `JIRA_EMAIL` | Jira service account email | Yes |
-| `JIRA_API_TOKEN` | Jira API token | Yes |
+| `SERVICENOW_INSTANCE` | ServiceNow instance name | Yes |
+| `SERVICENOW_USERNAME` | ServiceNow service account | Yes |
+| `SERVICENOW_PASSWORD` | ServiceNow password | Yes |
+| `SERVICENOW_ASSIGNMENT_GROUP` | Assignment group (optional) | No |
+| `SERVICENOW_CALLER_ID` | Caller sys_id (optional) | No |
 | `OPENSEARCH_ENDPOINT` | OpenSearch domain endpoint | Yes |
 | `NOTIFICATION_EMAIL` | Distribution list email | Yes |
 | `BEDROCK_MODEL_ID` | Claude model ID | Yes |
@@ -345,7 +346,7 @@ pro-acti-moni-bot/
 │   │   │   └── classifier.py   # Severity classification
 │   │   ├── integrations/
 │   │   │   ├── __init__.py
-│   │   │   ├── jira.py         # Jira integration
+│   │   │   ├── servicenow.py   # ServiceNow integration
 │   │   │   └── notifications.py # Email notifications
 │   │   ├── models/
 │   │   │   ├── __init__.py
@@ -380,7 +381,7 @@ pro-acti-moni-bot/
    - Terraform >= 1.0
    - Docker
    - kubectl
-   - Jira Cloud account with API access
+   - ServiceNow instance with API access
 
 2. **Deploy Infrastructure**:
    ```bash
@@ -630,8 +631,8 @@ SIMILAR PAST INCIDENTS
 - INC-2023-0891: GC thrashing after config change (Resolved: Heap increase)
 
 ──────────────────────────────────────────────────────────────────
-JIRA TICKET: OPS-4521
-https://company.atlassian.net/browse/OPS-4521
+SERVICENOW INCIDENT: INC0012345
+https://company.service-now.com/nav_to.do?uri=incident.do?sysparm_query=number=INC0012345
 ══════════════════════════════════════════════════════════════════
 ```
 

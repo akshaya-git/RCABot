@@ -2,14 +2,14 @@
 Integrations Package.
 
 External service integrations:
-- JiraIntegration: Incident ticket management
+- ServiceNowIntegration: Incident ticket management
 - NotificationService: Email alerts via SNS/SES
 """
 
-from .jira import JiraIntegration
+from .servicenow import ServiceNowIntegration
 from .notifications import NotificationService
 
 __all__ = [
-    "JiraIntegration",
+    "ServiceNowIntegration",
     "NotificationService",
 ]

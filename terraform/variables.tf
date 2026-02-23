@@ -111,30 +111,36 @@ variable "opensearch_volume_size" {
 }
 
 # =============================================================================
-# Jira Configuration
+# ServiceNow Configuration
 # =============================================================================
 
-variable "jira_url" {
-  description = "Jira instance URL"
+variable "servicenow_instance" {
+  description = "ServiceNow instance name (e.g., 'dev12345' from dev12345.service-now.com)"
   type        = string
 }
 
-variable "jira_project" {
-  description = "Default Jira project key"
-  type        = string
-  default     = "OPS"
-}
-
-variable "jira_email" {
-  description = "Jira service account email"
+variable "servicenow_username" {
+  description = "ServiceNow service account username"
   type        = string
   sensitive   = true
 }
 
-variable "jira_api_token" {
-  description = "Jira API token"
+variable "servicenow_password" {
+  description = "ServiceNow service account password"
   type        = string
   sensitive   = true
+}
+
+variable "servicenow_assignment_group" {
+  description = "Default ServiceNow assignment group for incidents"
+  type        = string
+  default     = ""
+}
+
+variable "servicenow_caller_id" {
+  description = "ServiceNow caller sys_id for incidents"
+  type        = string
+  default     = ""
 }
 
 # =============================================================================

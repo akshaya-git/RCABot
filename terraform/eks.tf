@@ -118,6 +118,7 @@ module "monitoring_agent_irsa_role" {
     opensearch     = aws_iam_policy.monitoring_agent_opensearch.arn
     secrets        = aws_iam_policy.monitoring_agent_secrets.arn
     sns            = aws_iam_policy.monitoring_agent_sns.arn
+    s3_rag         = aws_iam_policy.monitoring_agent_s3_rag.arn
   }
 
   tags = local.common_tags
@@ -166,14 +167,17 @@ resource "kubernetes_config_map" "monitoring_agent" {
   }
 
   data = {
-    AWS_REGION            = var.aws_region
-    JIRA_PROJECT          = var.jira_project
-    OPENSEARCH_ENDPOINT   = aws_opensearch_domain.main.endpoint
-    SNS_TOPIC_ARN         = aws_sns_topic.alerts.arn
-    COLLECTION_INTERVAL   = tostring(var.collection_interval)
-    BEDROCK_MODEL_ID      = "anthropic.claude-3-sonnet-20240229-v1:0"
-    CLOUDWATCH_NAMESPACES = join(",", var.cloudwatch_namespaces)
-    SECRETS_ARN           = aws_secretsmanager_secret.jira_credentials.arn
+    AWS_REGION                   = var.aws_region
+    SERVICENOW_ASSIGNMENT_GROUP  = var.servicenow_assignment_group
+    SERVICENOW_CALLER_ID         = var.servicenow_caller_id
+    OPENSEARCH_ENDPOINT          = aws_opensearch_domain.main.endpoint
+    SNS_TOPIC_ARN                = aws_sns_topic.alerts.arn
+    COLLECTION_INTERVAL          = tostring(var.collection_interval)
+    BEDROCK_MODEL_ID             = "anthropic.claude-3-sonnet-20240229-v1:0"
+    CLOUDWATCH_NAMESPACES        = join(",", var.cloudwatch_namespaces)
+    SECRETS_ARN                  = aws_secretsmanager_secret.servicenow_credentials.arn
+    RAG_S3_BUCKET                = aws_s3_bucket.rag_data.id
+    RAG_S3_BUCKET_ARN            = aws_s3_bucket.rag_data.arn
   }
 
   depends_on = [kubernetes_namespace.monitoring]

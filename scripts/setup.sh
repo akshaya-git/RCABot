@@ -22,24 +22,25 @@ command -v kubectl >/dev/null 2>&1 || { echo "kubectl is required but not instal
 read -p "AWS Region [us-east-1]: " AWS_REGION
 AWS_REGION=${AWS_REGION:-us-east-1}
 
-read -p "Jira URL (e.g., https://company.atlassian.net): " JIRA_URL
-read -p "Jira Email: " JIRA_EMAIL
-read -s -p "Jira API Token: " JIRA_API_TOKEN
+read -p "ServiceNow Instance (e.g., dev12345 from dev12345.service-now.com): " SERVICENOW_INSTANCE
+read -p "ServiceNow Username: " SERVICENOW_USERNAME
+read -s -p "ServiceNow Password: " SERVICENOW_PASSWORD
 echo
-read -p "Jira Project Key [OPS]: " JIRA_PROJECT
-JIRA_PROJECT=${JIRA_PROJECT:-OPS}
+read -p "ServiceNow Assignment Group (optional): " SERVICENOW_ASSIGNMENT_GROUP
+read -p "ServiceNow Caller ID (optional, sys_id): " SERVICENOW_CALLER_ID
 
 read -p "Notification Email(s) (comma-separated): " NOTIFICATION_EMAILS
 
 # Create terraform.tfvars
 echo "Creating terraform.tfvars..."
 cat > "$PROJECT_DIR/terraform/terraform.tfvars" << EOF
-aws_region         = "$AWS_REGION"
-jira_url           = "$JIRA_URL"
-jira_email         = "$JIRA_EMAIL"
-jira_api_token     = "$JIRA_API_TOKEN"
-jira_project       = "$JIRA_PROJECT"
-notification_emails = [$(echo "$NOTIFICATION_EMAILS" | sed 's/,/","/g' | sed 's/^/"/' | sed 's/$/"/' )]
+aws_region                  = "$AWS_REGION"
+servicenow_instance         = "$SERVICENOW_INSTANCE"
+servicenow_username         = "$SERVICENOW_USERNAME"
+servicenow_password         = "$SERVICENOW_PASSWORD"
+servicenow_assignment_group = "$SERVICENOW_ASSIGNMENT_GROUP"
+servicenow_caller_id        = "$SERVICENOW_CALLER_ID"
+notification_emails         = [$(echo "$NOTIFICATION_EMAILS" | sed 's/,/","/g' | sed 's/^/"/' | sed 's/$/"/' )]
 EOF
 
 # Initialize and apply Terraform
@@ -58,6 +59,7 @@ CLUSTER_NAME=$(terraform output -raw cluster_name)
 OPENSEARCH_ENDPOINT=$(terraform output -raw opensearch_endpoint)
 SNS_TOPIC_ARN=$(terraform output -raw sns_topic_arn)
 ROLE_ARN=$(terraform output -raw monitoring_agent_role_arn)
+RAG_S3_BUCKET=$(terraform output -raw rag_s3_bucket_name)
 
 # Configure kubectl
 echo "========================================"
@@ -89,13 +91,15 @@ kubectl apply -f namespace.yaml
 export ECR_REPOSITORY_URL="$ECR_REPO"
 export MONITORING_AGENT_ROLE_ARN="$ROLE_ARN"
 export AWS_REGION="$AWS_REGION"
-export JIRA_URL="$JIRA_URL"
-export JIRA_EMAIL="$JIRA_EMAIL"
-export JIRA_API_TOKEN="$JIRA_API_TOKEN"
-export JIRA_PROJECT="$JIRA_PROJECT"
+export SERVICENOW_INSTANCE="$SERVICENOW_INSTANCE"
+export SERVICENOW_USERNAME="$SERVICENOW_USERNAME"
+export SERVICENOW_PASSWORD="$SERVICENOW_PASSWORD"
+export SERVICENOW_ASSIGNMENT_GROUP="$SERVICENOW_ASSIGNMENT_GROUP"
+export SERVICENOW_CALLER_ID="$SERVICENOW_CALLER_ID"
 export OPENSEARCH_ENDPOINT="$OPENSEARCH_ENDPOINT"
 export SNS_TOPIC_ARN="$SNS_TOPIC_ARN"
 export NOTIFICATION_EMAILS="$NOTIFICATION_EMAILS"
+export RAG_S3_BUCKET="$RAG_S3_BUCKET"
 
 envsubst < serviceaccount.yaml | kubectl apply -f -
 envsubst < configmap.yaml | kubectl apply -f -

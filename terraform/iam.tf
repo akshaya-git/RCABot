@@ -168,7 +168,50 @@ resource "aws_iam_policy" "monitoring_agent_secrets" {
           "secretsmanager:DescribeSecret"
         ]
         Resource = [
-          aws_secretsmanager_secret.jira_credentials.arn
+          aws_secretsmanager_secret.servicenow_credentials.arn
+        ]
+      }
+    ]
+  })
+
+  tags = local.common_tags
+}
+
+# =============================================================================
+# S3 RAG Data Access Policy
+# =============================================================================
+
+resource "aws_iam_policy" "monitoring_agent_s3_rag" {
+  name        = "${local.name}-s3-rag-policy"
+  description = "Allow monitoring agent to access RAG data in S3"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "S3RAGDataRead"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:GetObjectVersion",
+          "s3:ListBucket",
+          "s3:GetBucketLocation"
+        ]
+        Resource = [
+          aws_s3_bucket.rag_data.arn,
+          "${aws_s3_bucket.rag_data.arn}/*"
+        ]
+      },
+      {
+        Sid    = "S3RAGDataWrite"
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = [
+          "${aws_s3_bucket.rag_data.arn}/case-history/*",
+          "${aws_s3_bucket.rag_data.arn}/exports/*"
         ]
       }
     ]
