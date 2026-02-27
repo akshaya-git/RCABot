@@ -1,0 +1,19 @@
+# Demo Application Terraform Variables
+# Copy this file to terraform.tfvars and fill in your values
+
+# AWS Region where your EKS cluster is deployed
+aws_region = "us-east-1"
+
+# Name of your existing EKS cluster
+eks_cluster_name = "my-eks-cluster"
+
+# Database credentials
+db_username = "demoadmin"
+db_password = "CHANGE_THIS_PASSWORD"  # Use a strong password
+db_name     = "inventory"
+
+# Environment tag
+environment = "demo"
+
+# Optional: Email for CloudWatch alarm notifications
+notification_email = ""

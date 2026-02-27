@@ -50,19 +50,6 @@ curl http://localhost:8080/test/connections
 
 See [docs/Architecture.md](docs/Architecture.md) for detailed architecture documentation.
 
-## RAG Setup (Runbooks & Learning)
-
-See [docs/RAG-Setup-Guide.md](docs/RAG-Setup-Guide.md) for how to upload your runbooks.
-
-**Quick start:**
-```bash
-# Upload your runbooks to S3
-aws s3 sync ./your-runbooks/ s3://YOUR-BUCKET/runbooks/
-
-# Import to the system
-./scripts/import-rag-data.sh
-```
-
 ```
 CloudWatch  -->  Collectors  -->  Anomaly Detector  -->  Classifier (P1-P6)
                      |                  |                      |
@@ -70,6 +57,222 @@ CloudWatch  -->  Collectors  -->  Anomaly Detector  -->  Classifier (P1-P6)
                 OpenSearch <------ Bedrock (Claude) ---->  ServiceNow + Notifications
                 (RAG/History)                              (Incidents + Alerts)
 ```
+
+---
+
+## Configuration
+
+All configuration is done via environment variables in the Kubernetes ConfigMap (`agent/manifests/configmap.yaml`) and Secrets (`agent/manifests/secrets.yaml`).
+
+### LLM Model Configuration
+
+The agent uses Amazon Bedrock (Claude) for anomaly detection, root cause analysis, and incident classification.
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `BEDROCK_MODEL_ID` | Bedrock model ID | No | `anthropic.claude-3-sonnet-20240229-v1:0` |
+
+**Available Models:**
+
+| Model | Model ID | Notes |
+|-------|----------|-------|
+| Claude 3.5 Sonnet v2 | `anthropic.claude-3-5-sonnet-20241022-v2:0` | Recommended |
+| Claude 3.5 Sonnet | `anthropic.claude-3-5-sonnet-20240620-v1:0` | High quality |
+| Claude 3 Sonnet | `anthropic.claude-3-sonnet-20240229-v1:0` | Default |
+| Claude 3 Haiku | `anthropic.claude-3-haiku-20240307-v1:0` | Faster, lower cost |
+| Claude 3 Opus | `anthropic.claude-3-opus-20240229-v1:0` | Highest quality |
+
+**Example:**
+```yaml
+# In agent/manifests/configmap.yaml
+data:
+  BEDROCK_MODEL_ID: "anthropic.claude-3-5-sonnet-20241022-v2:0"
+```
+
+**Verify model access:**
+```bash
+aws bedrock-runtime invoke-model \
+  --model-id "anthropic.claude-3-sonnet-20240229-v1:0" \
+  --content-type "application/json" \
+  --body '{"anthropic_version":"bedrock-2023-05-31","max_tokens":100,"messages":[{"role":"user","content":"Hello"}]}' \
+  /dev/stdout
+```
+
+---
+
+### CloudWatch Configuration
+
+The agent collects CloudWatch signals through four collectors: Alarms, Metrics, Logs, and Log Insights.
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `AWS_REGION` | AWS region for CloudWatch | Yes | `us-east-1` |
+| `CLOUDWATCH_NAMESPACES` | Comma-separated namespaces to monitor | Yes | - |
+| `COLLECTION_INTERVAL` | Polling interval in seconds | No | `60` |
+
+**Supported Namespaces:**
+
+| Namespace | What It Monitors |
+|-----------|------------------|
+| `AWS/EC2` | EC2 instances |
+| `AWS/RDS` | RDS databases |
+| `AWS/ECS` | ECS services |
+| `AWS/EKS` | EKS clusters |
+| `AWS/Lambda` | Lambda functions |
+| `AWS/ApplicationELB` | Load balancers |
+| Custom (e.g., `DemoApp`) | Your applications |
+
+**Example:**
+```yaml
+# In agent/manifests/configmap.yaml
+data:
+  AWS_REGION: "us-east-1"
+  CLOUDWATCH_NAMESPACES: "AWS/EC2,AWS/RDS,AWS/Lambda,DemoApp"
+  COLLECTION_INTERVAL: "60"
+```
+
+**Find your namespaces:**
+```bash
+# List all namespaces with metrics
+aws cloudwatch list-metrics --query 'Metrics[*].Namespace' --output text | tr '\t' '\n' | sort -u
+
+# List alarms
+aws cloudwatch describe-alarms --query 'MetricAlarms[*].[AlarmName,Namespace]' --output table
+```
+
+**Find your log groups:**
+```bash
+aws logs describe-log-groups --query 'logGroups[*].logGroupName' --output table
+```
+
+---
+
+### ServiceNow Configuration
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `SERVICENOW_INSTANCE` | Instance name (e.g., `mycompany`) | Yes |
+| `SERVICENOW_USERNAME` | Service account username | Yes |
+| `SERVICENOW_PASSWORD` | Service account password | Yes |
+| `SERVICENOW_ASSIGNMENT_GROUP` | Default assignment group | No |
+| `SERVICENOW_CALLER_ID` | Caller sys_id | No |
+
+**Example (in secrets.yaml):**
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: monitoring-agent-secrets
+  namespace: monitoring
+stringData:
+  SERVICENOW_INSTANCE: "mycompany"
+  SERVICENOW_USERNAME: "svc_monitoring"
+  SERVICENOW_PASSWORD: "your-password"
+```
+
+---
+
+### RAG & Storage Configuration
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `OPENSEARCH_ENDPOINT` | OpenSearch domain endpoint | Yes |
+| `RAG_S3_BUCKET` | S3 bucket for runbooks/case history | Yes |
+| `RAG_S3_RUNBOOKS_PREFIX` | S3 prefix for runbooks | No (default: `runbooks/`) |
+| `RAG_S3_CASE_HISTORY_PREFIX` | S3 prefix for case history | No (default: `case-history/`) |
+
+See [docs/RAG-Setup-Guide.md](docs/RAG-Setup-Guide.md) for how to upload your runbooks.
+
+---
+
+### Notification Configuration
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `SNS_TOPIC_ARN` | SNS topic ARN for alerts | Yes |
+| `NOTIFICATION_EMAILS` | Comma-separated email list | No |
+
+---
+
+### Complete ConfigMap Example
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monitoring-agent-config
+  namespace: monitoring
+data:
+  # AWS Region
+  AWS_REGION: "us-east-1"
+
+  # LLM Model
+  BEDROCK_MODEL_ID: "anthropic.claude-3-5-sonnet-20241022-v2:0"
+
+  # CloudWatch Collection
+  CLOUDWATCH_NAMESPACES: "AWS/EC2,AWS/RDS,AWS/Lambda,DemoApp"
+  COLLECTION_INTERVAL: "60"
+
+  # RAG Storage
+  OPENSEARCH_ENDPOINT: "https://search-xxxxx.us-east-1.es.amazonaws.com"
+  RAG_S3_BUCKET: "my-rag-bucket"
+  RAG_S3_RUNBOOKS_PREFIX: "runbooks/"
+  RAG_S3_CASE_HISTORY_PREFIX: "case-history/"
+
+  # Notifications
+  SNS_TOPIC_ARN: "arn:aws:sns:us-east-1:123456789012:alerts"
+
+  # ServiceNow (non-sensitive)
+  SERVICENOW_ASSIGNMENT_GROUP: "Cloud Operations"
+```
+
+---
+
+## Configuring for Demo App
+
+If you deployed the demo app from `demo/app/`, configure the agent to monitor its signals:
+
+### Step 1: Get Demo App Values
+
+```bash
+cd demo/app/terraform
+terraform output cloudwatch_log_group   # e.g., /eks/my-cluster/demo-app
+terraform output sns_topic_arn
+```
+
+### Step 2: Update ConfigMap
+
+```yaml
+data:
+  AWS_REGION: "us-east-1"
+  CLOUDWATCH_NAMESPACES: "AWS/RDS,DemoApp"   # RDS alarms + app errors
+  BEDROCK_MODEL_ID: "anthropic.claude-3-5-sonnet-20241022-v2:0"
+```
+
+### Step 3: Apply and Test
+
+```bash
+kubectl apply -f agent/manifests/configmap.yaml
+kubectl rollout restart deployment/monitoring-agent -n monitoring
+
+# Generate an anomaly
+cd demo/app/scripts && ./generate-anomaly.sh cpu 60
+
+# Check detection (after 2-3 min)
+curl http://localhost:8080/incidents
+```
+
+### Demo App CloudWatch Resources
+
+| Resource | Namespace | Alarm Name |
+|----------|-----------|------------|
+| RDS CPU | AWS/RDS | `demo-app-demo-rds-cpu-high` |
+| RDS Connections | AWS/RDS | `demo-app-demo-rds-connections-high` |
+| RDS Memory | AWS/RDS | `demo-app-demo-rds-memory-low` |
+| App Errors | DemoApp | `demo-app-demo-application-errors` |
+| App Logs | - | `/eks/<cluster>/demo-app` |
+
+---
 
 ## Severity Levels
 
@@ -81,6 +284,8 @@ CloudWatch  -->  Collectors  -->  Anomaly Detector  -->  Classifier (P1-P6)
 | P4 | Low - Minimal impact | Yes | Summary |
 | P5 | Very Low - Informational | Yes | Summary |
 | P6 | Trivial - No impact | Yes | None |
+
+---
 
 ## API Endpoints
 
@@ -104,30 +309,11 @@ CloudWatch  -->  Collectors  -->  Anomaly Detector  -->  Classifier (P1-P6)
 | `/extract/runbook` | POST | Extract schema from raw text |
 | `/extract/runbook/index` | POST | Extract and index raw runbook |
 
-## Configuration
+---
 
-### Environment Variables
+## Terraform Variables
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `AWS_REGION` | AWS region | Yes |
-| `BEDROCK_MODEL_ID` | Claude model ID | No |
-| `CLOUDWATCH_NAMESPACES` | Namespaces to monitor | No |
-| `COLLECTION_INTERVAL` | Polling interval (seconds) | No |
-| `SERVICENOW_INSTANCE` | ServiceNow instance name | Yes |
-| `SERVICENOW_USERNAME` | ServiceNow service account | Yes |
-| `SERVICENOW_PASSWORD` | ServiceNow password | Yes |
-| `SERVICENOW_ASSIGNMENT_GROUP` | Assignment group (optional) | No |
-| `SERVICENOW_CALLER_ID` | Caller sys_id (optional) | No |
-| `OPENSEARCH_ENDPOINT` | OpenSearch endpoint | Yes |
-| `SNS_TOPIC_ARN` | SNS topic for alerts | Yes |
-| `RAG_S3_BUCKET` | S3 bucket for RAG data | Yes |
-| `RAG_S3_RUNBOOKS_PREFIX` | S3 prefix for runbooks | No |
-| `RAG_S3_CASE_HISTORY_PREFIX` | S3 prefix for case history | No |
-
-### Terraform Variables
-
-See `terraform/terraform.tfvars.example` for all configuration options.
+See `terraform/terraform.tfvars.example` for infrastructure configuration options.
 
 ## Project Structure
 

@@ -492,17 +492,35 @@ Before analysis, the agent retrieves relevant knowledge from OpenSearch:
 #### Runbooks (SOPs)
 ```json
 {
-    "title": "High CPU Troubleshooting Guide",
+    "id": "runbook-high-cpu-001",
+    "title": "High CPU Utilization Troubleshooting",
     "category": "performance",
-    "content": "Standard procedure for investigating high CPU utilization...",
-    "steps": [
-        "1. SSH to instance and run 'top' to identify process",
-        "2. Check for runaway processes or memory pressure",
-        "3. Review recent deployments in the last 24 hours",
-        "4. Check application logs for errors or loops",
-        "5. Consider horizontal scaling if load-related"
+    "content": "This runbook covers how to diagnose and resolve high CPU utilization on EC2 instances and ECS containers.",
+    "keywords": [
+        "cpu",
+        "high cpu",
+        "performance",
+        "ec2",
+        "ecs",
+        "latency",
+        "timeout",
+        "top",
+        "process"
     ],
-    "keywords": ["cpu", "performance", "ec2", "high utilization"]
+    "steps": [
+        "SSH to instance and run 'top -o %CPU' to identify high-CPU process",
+        "Run 'ps aux --sort=-%cpu | head -20' to check for runaway processes",
+        "Review deployment history for the last 24 hours",
+        "Check memory pressure with 'free -m' and 'vmstat 1 5'",
+        "Review application logs for errors",
+        "If runaway process, kill with 'kill -9 <pid>'",
+        "If memory leak, restart service or roll back deployment",
+        "If load-related, scale horizontally by adding instances",
+        "If code issue, roll back to previous version",
+        "Escalate to Platform Engineering if not resolved in 30 minutes"
+    ],
+    "source_file": "s3://my-bucket/runbooks/high-cpu-troubleshooting.md",
+    "indexed_at": "2024-02-18T10:30:00Z"
 }
 ```
 
@@ -510,16 +528,43 @@ Before analysis, the agent retrieves relevant knowledge from OpenSearch:
 ```json
 {
     "incident_id": "INC-2024-0142",
-    "title": "High CPU on prod-api cluster - January 2024",
+    "title": "High CPU Utilization on prod-api cluster - Memory Leak",
+    "date": "2024-01-15T10:30:00Z",
+    "duration_minutes": 45,
     "priority": "P2",
-    "root_cause": "Memory leak in authentication service v2.1.0 caused excessive garbage collection, leading to CPU spikes",
-    "resolution": "Rolled back to v2.0.9, memory leak fixed in v2.1.1",
+    "severity": "High",
+    "service_affected": "prod-api cluster",
+    "description": "High CPU utilization on prod-api cluster caused API latency spikes and intermittent 504 errors for approximately 45 minutes.",
+    "symptoms": [
+        "CPU utilization > 80%",
+        "API latency spikes",
+        "504 Gateway Timeout errors",
+        "Memory utilization climbing"
+    ],
+    "root_cause": "Memory leak in authentication service v2.1.0 caused excessive garbage collection, leading to CPU spikes. The leak was in the session token cache which wasn't properly releasing expired tokens.",
+    "resolution": "Rolled back auth-service from v2.1.0 to v2.0.9. The memory leak was subsequently fixed in v2.1.1.",
+    "resolution_steps": [
+        "Identified memory leak in auth-service via heap analysis",
+        "Rolled back to previous stable version v2.0.9",
+        "Verified services recovered and alarm cleared"
+    ],
+    "keywords": [
+        "cpu",
+        "memory leak",
+        "garbage collection",
+        "auth-service",
+        "rollback",
+        "504 error",
+        "latency"
+    ],
+    "lessons_learned": [
+        "Add memory leak detection to CI/CD pipeline",
+        "Implement gradual rollout for auth-service changes",
+        "Add heap dump automation when memory threshold exceeded"
+    ],
     "time_to_resolve": "45 minutes",
-    "recommended_actions": [
-        "Check recent deployments",
-        "Review memory utilization alongside CPU",
-        "Consider rollback if deployment correlates"
-    ]
+    "source_file": "s3://my-bucket/case-history/INC-2024-0142.md",
+    "indexed_at": "2024-01-16T09:00:00Z"
 }
 ```
 
