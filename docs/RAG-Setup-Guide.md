@@ -125,16 +125,102 @@ s3://your-bucket/
 
 ```
 ┌──────────────────┐         ┌──────────────────┐         ┌──────────────────┐
-│  YOUR FILE       │         │  CLAUDE EXTRACTS │         │  STORED SCHEMA   │
+│  YOUR FILE       │         │  CLAUDE EXTRACTS │         │  STORED SCHEMA*  │
 │                  │         │                  │         │                  │
 │  # High CPU      │         │  Reads content   │         │  {               │
 │                  │   ───►  │  Identifies:     │   ───►  │    "title": ..   │
 │  When CPU high:  │         │  - What it's for │         │    "category":.  │
 │  1. Run top      │         │  - Key steps     │         │    "keywords":[].│
 │  2. Check mem    │         │  - Keywords      │         │    "steps": []   │
+│                  │         │                  │         │    ...           │
 │                  │         │                  │         │  }               │
 └──────────────────┘         └──────────────────┘         └──────────────────┘
+
+* Simplified view. See "OpenSearch Schema Definitions" below for complete schema.
 ```
+
+---
+
+## OpenSearch Schema Definitions
+
+The following schemas define the structure of data stored in OpenSearch for RAG retrieval.
+
+### Runbook Schema
+
+Stored in OpenSearch index: `runbooks`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | Yes | Unique identifier (auto-generated) |
+| `title` | string | Yes | Runbook title extracted from document |
+| `category` | string | Yes | Category classification (e.g., `performance`, `security`, `database`, `networking`, `storage`) |
+| `content` | string | Yes | Summary/overview of the runbook |
+| `keywords` | array[string] | Yes | Search keywords for matching incidents |
+| `steps` | array[string] | Yes | Ordered list of remediation steps |
+| `source_file` | string | Yes | S3 URI of the original file |
+| `indexed_at` | datetime | Yes | Timestamp when indexed |
+
+**Category Values:**
+- `performance` - CPU, memory, latency issues
+- `security` - Access, authentication, vulnerability issues
+- `database` - RDS, DynamoDB, connection issues
+- `networking` - VPC, DNS, connectivity issues
+- `storage` - EBS, S3, disk space issues
+- `application` - Application-specific errors
+- `infrastructure` - EC2, ECS, EKS issues
+- `general` - Catch-all for uncategorized
+
+---
+
+### Case History Schema
+
+Stored in OpenSearch index: `case-history`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `incident_id` | string | Yes | Unique incident identifier (e.g., `INC-2024-0142`) |
+| `title` | string | Yes | Incident title/summary |
+| `date` | datetime | Yes | When the incident occurred |
+| `duration_minutes` | integer | No | How long the incident lasted |
+| `priority` | string | Yes | Priority level (`P1`, `P2`, `P3`, `P4`, `P5`, `P6`) |
+| `severity` | string | Yes | Severity label (`Critical`, `High`, `Medium`, `Low`, `Very Low`, `Trivial`) |
+| `service_affected` | string | Yes | Which service/system was impacted |
+| `description` | string | Yes | Detailed description of the incident |
+| `symptoms` | array[string] | Yes | Observable symptoms during the incident |
+| `root_cause` | string | Yes | Verified root cause explanation |
+| `resolution` | string | Yes | How the incident was resolved |
+| `resolution_steps` | array[string] | Yes | Ordered steps taken to resolve |
+| `keywords` | array[string] | Yes | Search keywords for matching future incidents |
+| `lessons_learned` | array[string] | No | Post-mortem learnings |
+| `time_to_resolve` | string | No | Human-readable resolution time |
+| `source_file` | string | Yes | S3 URI of the original file |
+| `indexed_at` | datetime | Yes | Timestamp when indexed |
+
+---
+
+### Incident Schema (Live Incidents)
+
+Stored in OpenSearch index: `incidents`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `incident_id` | string | Yes | Unique incident identifier |
+| `title` | string | Yes | Incident title |
+| `priority` | string | Yes | Priority level (`P1`-`P6`) |
+| `severity` | string | Yes | Severity label |
+| `status` | string | Yes | Current status (`open`, `investigating`, `resolved`, `closed`) |
+| `source` | string | Yes | Where the incident originated (e.g., `cloudwatch-alarms`) |
+| `resource_type` | string | Yes | AWS resource type (`ec2`, `rds`, `ecs`, `lambda`, etc.) |
+| `resource_id` | string | No | Specific resource identifier |
+| `namespace` | string | No | CloudWatch namespace |
+| `description` | string | Yes | Incident description |
+| `root_cause_analysis` | string | No | AI-generated RCA |
+| `recommended_actions` | array[string] | No | AI-generated recommendations |
+| `servicenow_ticket` | string | No | ServiceNow incident number |
+| `created_at` | datetime | Yes | When incident was created |
+| `updated_at` | datetime | Yes | Last update timestamp |
+| `resolved_at` | datetime | No | When incident was resolved |
+| `resolution` | string | No | How it was resolved (populated on close) |
 
 ---
 

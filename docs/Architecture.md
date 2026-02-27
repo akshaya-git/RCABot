@@ -487,9 +487,11 @@ Raw CloudWatch data provides the facts about the current situation:
 
 ### Source 2: RAG Context (What We've Learned)
 
-Before analysis, the agent retrieves relevant knowledge from OpenSearch:
+Before analysis, the agent retrieves relevant knowledge from OpenSearch.
 
-#### Runbooks (SOPs)
+> **Note:** The schemas below are complete. See [RAG-Setup-Guide.md](RAG-Setup-Guide.md#opensearch-schema-definitions) for field definitions and data types.
+
+#### Runbooks (SOPs)*
 ```json
 {
     "id": "runbook-high-cpu-001",
@@ -524,7 +526,7 @@ Before analysis, the agent retrieves relevant knowledge from OpenSearch:
 }
 ```
 
-#### Similar Past Incidents
+#### Similar Past Incidents*
 ```json
 {
     "incident_id": "INC-2024-0142",
@@ -567,6 +569,8 @@ Before analysis, the agent retrieves relevant knowledge from OpenSearch:
     "indexed_at": "2024-01-16T09:00:00Z"
 }
 ```
+
+_*Full schema definitions available in [RAG-Setup-Guide.md](RAG-Setup-Guide.md#opensearch-schema-definitions)_
 
 **What this provides:**
 - Standard operating procedures
