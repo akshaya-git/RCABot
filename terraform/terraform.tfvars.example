@@ -1,0 +1,60 @@
+# =============================================================================
+# Terraform Variables - Proactive Monitoring Bot
+# Copy this file to terraform.tfvars and fill in your values
+# =============================================================================
+
+# AWS Configuration
+aws_region   = "us-east-1"
+environment  = "prod"
+project_name = "proactive-monitor"
+
+# VPC Configuration
+vpc_cidr           = "10.0.0.0/16"
+# availability_zones = []  # Leave empty to auto-detect from region
+
+# EKS Configuration
+cluster_name        = "monitoring-cluster"
+cluster_version     = "1.29"
+node_instance_types = ["t3.large"]
+node_desired_size   = 2
+node_min_size       = 1
+node_max_size       = 4
+
+# OpenSearch Configuration
+opensearch_instance_type  = "t3.small.search"
+opensearch_instance_count = 2
+opensearch_volume_size    = 20
+
+# ServiceNow Configuration
+# Use just the instance name from https://<instance>.service-now.com
+servicenow_instance         = ""
+servicenow_username         = ""
+servicenow_password         = ""
+servicenow_assignment_group = ""   # Optional: e.g., "Cloud Operations"
+servicenow_caller_id        = ""   # Optional: sys_id of the caller
+
+# Notification Configuration
+notification_emails = [
+  "your-email@example.com"
+]
+
+# CloudWatch Namespaces to Monitor
+cloudwatch_namespaces = [
+  "AWS/EC2",
+  "AWS/EBS",
+  "AWS/ECS",
+  "AWS/EKS",
+  "AWS/Lambda",
+  "AWS/RDS",
+  "AWS/ApplicationELB"
+]
+
+# Collection interval (seconds)
+collection_interval = 60
+
+# Tags
+tags = {
+  Project     = "ProactiveMonitor"
+  ManagedBy   = "Terraform"
+  Environment = "prod"
+}
