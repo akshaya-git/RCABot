@@ -5,19 +5,52 @@ AI-powered monitoring agent that continuously watches AWS CloudWatch for anomali
 ## How It Works
 
 ```
-CloudWatch  →  Collectors  →  Anomaly Detector (Bedrock)  →  Classifier (P1-P6)
-                    ↕                    ↕                          ↓
-              OpenSearch          RAG Context              ServiceNow + Email
-              (Knowledge Base)   (Runbooks + History)      (Incidents + Alerts)
+                          ┌───────────────────┐
+                          │    CloudWatch     │
+                          │  Alarms / Metrics │
+                          └─────────┬─────────┘
+                                    │
+                                    ▼
+┌───────────────────────────────────────────────────┐ ┌─────────────────────────────────┐
+│                  Monitoring Agent                 │ │   Amazon Bedrock (Claude)       │
+│                                                   │ │                                 │
+│  1. Collectors (poll every 60s)                   │ │ Call 1 (Anomaly Detector):      │
+│                  │                                │ │   • Anomaly detection           │
+│                  ▼                                │ │   • Root cause analysis         │
+│  2. Query OpenSearch for RAG context              │ │   • Recommended actions         │
+│                  │                                │ │                                 │
+│                  ▼                                │ │ Call 2 (Classifier):            │
+│  3. Send events + context  ◀─────────────────────▶│ │   • AI severity (P1-P6)         │
+│     (alarms, metrics, thresholds,                 │ │                                 │
+│      affected resources) + RAG context            │ └─────────────────────────────────┘
+│                  │                                │
+│                  ▼                                │
+│  4. Classify: run rule-based classification       │
+│     (anomaly scores + category + keywords)        │
+│     and compare with AI classification from       │
+│     Bedrock — take the more severe of the two     │
+│                  │                                │
+│      ┌───────────┼──────────────┐                 │
+│      ▼           ▼              ▼                 │
+│ ┌──────────┐ ┌──────────┐ ┌─────────────────┐     │
+│ │SNS Email │ │ServiceNow│ │Store in         │     │
+│ │(RCA      │ │          │ │OpenSearch       │     │
+│ │ alert)   │ │P1-P3:open│ │(future RAG)     │     │
+│ │          │ │P4-P6:auto│ │                 │     │
+│ │          │ │  closed  │ │                 │     │
+│ └──────────┘ └──────────┘ └─────────────────┘     │
+│                                                   │
+└───────────────────────────────────────────────────┘
 ```
 
-1. Collectors poll CloudWatch alarms and metrics every 60s (configurable)
-2. Alarm history is also checked so transient alarms that revert to OK are still caught
-3. Amazon Bedrock (Claude) analyzes events for anomalies and generates root cause analysis
-4. Incidents are classified P1-P6 using both rule-based and AI classification
-5. ServiceNow tickets are created (P1-P3 stay open, P4-P6 are auto-closed)
-6. Email notifications are sent via SNS with detailed RCA and recommended actions
-7. Resolved incidents are stored in OpenSearch to improve future analysis
+1. Collectors inside the agent poll CloudWatch alarms and metrics every 60s (configurable). Alarm history is also checked so transient alarms that revert to OK are still caught.
+2. The agent queries OpenSearch for similar past incidents and runbooks (RAG context)
+3. The agent makes two Bedrock calls — first for anomaly detection + root cause analysis + recommended actions, then for AI severity classification (P1-P6)
+4. The agent also runs rule-based classification using anomaly scores, event categories, and keyword matching — then takes the more severe of rule-based vs AI classification as the final severity
+5. The agent acts on the final classification:
+   - Creates ServiceNow tickets (P1-P3 stay open, P4-P6 are auto-closed)
+   - Sends email notifications via SNS with detailed RCA
+   - Stores the completed incident back into OpenSearch for future RAG learning
 
 ## Prerequisites
 
