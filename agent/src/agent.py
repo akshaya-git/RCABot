@@ -16,7 +16,7 @@ from collectors import CollectorManager, CloudWatchEvent
 from processors import AnomalyDetector, SeverityClassifier
 from integrations import ServiceNowIntegration, NotificationService
 from rag import RAGRetriever, S3RAGSync
-from models import Incident, IncidentStatus, Priority
+from models import Incident, IncidentCategory, IncidentStatus, Priority, AnomalyScore
 
 
 class AgentState(TypedDict):
@@ -74,6 +74,10 @@ class MonitoringAgent:
         self.notifications = NotificationService(config.get("notifications", {}))
         self.rag = RAGRetriever(config.get("rag", {}))
         self.s3_sync = S3RAGSync(config.get("s3_rag", {}), self.rag)
+
+        # RAG confidence threshold: if a past incident matches above this,
+        # skip Bedrock and reuse stored RCA/classification
+        self.rag_confidence_threshold = config.get("rag_confidence_threshold", 0.0)
 
         # Initialize LLM for analysis
         self.llm = ChatBedrock(
@@ -156,7 +160,7 @@ class MonitoringAgent:
         return state
 
     async def _analyze_node(self, state: AgentState) -> AgentState:
-        """Analyze events for anomalies."""
+        """Analyze events for anomalies. Uses RAG fast path if confidence is high enough."""
         state["current_step"] = "analyze"
 
         if not state["events"]:
@@ -164,9 +168,42 @@ class MonitoringAgent:
             return state
 
         try:
+            similar = state.get("similar_incidents", [])
+            threshold = self.rag_confidence_threshold
+
+            # RAG fast path: if top match exceeds threshold, reuse stored analysis
+            if threshold > 0 and similar and similar[0].get("_score", 0) >= threshold:
+                top_match = similar[0]
+                score = top_match["_score"]
+                print(f"RAG fast path: top match score {score:.3f} >= threshold {threshold:.3f}")
+                print(f"  Reusing RCA from past incident: {top_match.get('incident_id', 'unknown')}")
+
+                analyzed = []
+                for event in state["events"]:
+                    analyzed.append({
+                        "event": event.to_dict() if hasattr(event, 'to_dict') else event,
+                        "is_anomaly": True,
+                        "anomaly_score": AnomalyScore(
+                            score=score,
+                            confidence=score,
+                            reasoning=f"RAG fast path: matched past incident {top_match.get('incident_id', '')} with score {score:.3f}",
+                            factors=top_match.get("recommended_actions", []),
+                        ),
+                        "category": IncidentCategory(top_match.get("category", "unknown")),
+                        "root_cause": top_match.get("root_cause_analysis", top_match.get("root_cause", "")),
+                        "recommended_actions": top_match.get("recommended_actions", []),
+                        "rag_resolved": True,
+                        "rag_source_incident": top_match.get("incident_id", ""),
+                    })
+                state["analyzed_events"] = analyzed
+                anomaly_count = len(analyzed)
+                print(f"RAG-resolved {anomaly_count} events (skipped Bedrock)")
+                return state
+
+            # Standard path: call Bedrock for analysis
             context = {
                 "runbooks": state.get("runbooks", []),
-                "similar_incidents": state.get("similar_incidents", []),
+                "similar_incidents": similar,
             }
 
             analyzed = await self.anomaly_detector.analyze_events(
@@ -193,16 +230,31 @@ class MonitoringAgent:
             return state
 
         try:
-            context = {
-                "runbooks": state.get("runbooks", []),
-                "similar_incidents": state.get("similar_incidents", []),
-            }
+            # Check if events were RAG-resolved (skip Bedrock classification)
+            rag_resolved = any(e.get("rag_resolved") for e in state["analyzed_events"])
 
-            incidents = await self.classifier.classify(
-                state["analyzed_events"],
-                context=context
-            )
-            state["incidents"] = incidents
+            if rag_resolved and state.get("similar_incidents"):
+                top_match = state["similar_incidents"][0]
+                stored_priority = top_match.get("priority", "P4")
+                print(f"RAG fast path classification: using stored priority {stored_priority}")
+
+                # Still run rule-based, take more severe
+                incidents = await self.classifier.classify(
+                    state["analyzed_events"],
+                    context={"skip_ai": True, "rag_priority": stored_priority},
+                )
+                state["incidents"] = incidents
+            else:
+                # Standard path: rule-based + AI classification
+                context = {
+                    "runbooks": state.get("runbooks", []),
+                    "similar_incidents": state.get("similar_incidents", []),
+                }
+                incidents = await self.classifier.classify(
+                    state["analyzed_events"],
+                    context=context
+                )
+                state["incidents"] = incidents
 
             # Summary by priority
             priority_counts = {}
@@ -210,7 +262,8 @@ class MonitoringAgent:
                 p = inc.priority.value
                 priority_counts[p] = priority_counts.get(p, 0) + 1
 
-            print(f"Classified {len(incidents)} incidents: {priority_counts}")
+            prefix = "RAG-resolved" if rag_resolved else "Classified"
+            print(f"{prefix} {len(incidents)} incidents: {priority_counts}")
 
         except Exception as e:
             print(f"Classification error: {e}")

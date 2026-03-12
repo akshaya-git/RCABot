@@ -296,6 +296,29 @@
             {% endfor %}
         </div>
 
+        <div class="flow-container" id="ragExplorer" style="display:block; margin-bottom:30px;">
+            <div class="flow-header" style="border-bottom:2px solid #eee;">
+                <h2>📚 RAG Knowledge Base Explorer</h2>
+            </div>
+            <p style="color:#666; margin-bottom:15px;">Query OpenSearch indices to view stored incidents, runbooks, and correlation patterns with confidence scores.</p>
+            <div style="display:flex; gap:10px; margin-bottom:20px; flex-wrap:wrap;">
+                <button class="trigger-btn" style="width:auto; padding:10px 20px;" onclick="queryRAG('case-history')">Case History</button>
+                <button class="trigger-btn" style="width:auto; padding:10px 20px;" onclick="queryRAG('runbooks')">Runbooks</button>
+                <button class="trigger-btn" style="width:auto; padding:10px 20px;" onclick="queryRAG('correlation-patterns')">Correlation Patterns</button>
+            </div>
+            <div id="ragResults" style="display:none;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <h3 id="ragIndexName" style="color:#333;"></h3>
+                    <span id="ragCount" style="background:#667eea; color:white; padding:4px 12px; border-radius:12px; font-size:13px;"></span>
+                </div>
+                <div id="ragDocs" style="max-height:500px; overflow-y:auto;"></div>
+            </div>
+            <div id="ragLoading" style="display:none; text-align:center; padding:30px; color:#666;">
+                <span class="loading">Querying OpenSearch...</span>
+            </div>
+            <div id="ragError" style="display:none; padding:15px; background:#fff5f5; border-radius:8px; color:#dc3545;"></div>
+        </div>
+
         <div class="flow-container" id="flowContainer">
             <div class="flow-header">
                 <h2>Incident Flow</h2>
@@ -314,16 +337,20 @@
                     <div class="step-title">3. Agent Collection</div>
                     <div class="step-messages" id="messages-collection"></div>
                 </div>
+                <div class="flow-step" id="step-rag_check">
+                    <div class="step-title">4. OpenSearch RAG Lookup & Confidence Check</div>
+                    <div class="step-messages" id="messages-rag_check"></div>
+                </div>
                 <div class="flow-step" id="step-analysis">
-                    <div class="step-title">4. AI Analysis & Classification</div>
+                    <div class="step-title">5. Analysis & Classification (Bedrock or RAG Fast Path)</div>
                     <div class="step-messages" id="messages-analysis"></div>
                 </div>
                 <div class="flow-step" id="step-notification">
-                    <div class="step-title">5. Notification & Ticketing</div>
+                    <div class="step-title">6. Notification & Ticketing</div>
                     <div class="step-messages" id="messages-notification"></div>
                 </div>
                 <div class="flow-step" id="step-complete">
-                    <div class="step-title">6. Complete</div>
+                    <div class="step-title">7. Complete</div>
                     <div class="step-messages" id="messages-complete"></div>
                 </div>
             </div>
@@ -464,6 +491,84 @@
                 .catch(error => {
                     console.error('Error:', error);
                     alert('Failed to reset alarms');
+                });
+        }
+
+        function queryRAG(indexName) {
+            const resultsEl = document.getElementById('ragResults');
+            const loadingEl = document.getElementById('ragLoading');
+            const errorEl = document.getElementById('ragError');
+            const docsEl = document.getElementById('ragDocs');
+
+            resultsEl.style.display = 'none';
+            errorEl.style.display = 'none';
+            loadingEl.style.display = 'block';
+
+            fetch(`/api/rag-data?index=${indexName}`)
+                .then(r => r.json())
+                .then(data => {
+                    loadingEl.style.display = 'none';
+                    if (data.error) {
+                        errorEl.textContent = data.error;
+                        errorEl.style.display = 'block';
+                        return;
+                    }
+                    document.getElementById('ragIndexName').textContent = `Index: ${data.index}`;
+                    document.getElementById('ragCount').textContent = `${data.count} document${data.count !== 1 ? 's' : ''}`;
+                    docsEl.innerHTML = '';
+
+                    if (!data.exists || data.count === 0) {
+                        docsEl.innerHTML = '<div style="padding:20px; text-align:center; color:#666;">No documents found in this index.</div>';
+                        resultsEl.style.display = 'block';
+                        return;
+                    }
+
+                    data.documents.forEach((doc, i) => {
+                        const card = document.createElement('div');
+                        card.style.cssText = 'background:#f8f9fa; border-radius:8px; padding:15px; margin-bottom:10px; border-left:4px solid #667eea;';
+
+                        let title = '';
+                        let badges = '';
+                        let details = '';
+
+                        if (indexName === 'case-history') {
+                            title = doc.title || doc.alarm_name || doc.description || `Incident ${i+1}`;
+                            if (doc.category) badges += `<span style="background:#764ba2;color:white;padding:2px 8px;border-radius:10px;font-size:12px;margin-right:5px;">${doc.category}</span>`;
+                            if (doc.priority) badges += `<span style="background:#fd7e14;color:white;padding:2px 8px;border-radius:10px;font-size:12px;margin-right:5px;">${doc.priority}</span>`;
+                            if (doc.confidence != null) {
+                                const confPct = (doc.confidence * 100).toFixed(1);
+                                const confColor = doc.confidence >= 0.85 ? '#28a745' : doc.confidence >= 0.5 ? '#ffc107' : '#dc3545';
+                                badges += `<span style="background:${confColor};color:white;padding:2px 8px;border-radius:10px;font-size:12px;margin-right:5px;">Confidence: ${confPct}%</span>`;
+                            }
+                            if (doc.anomaly_score != null) {
+                                badges += `<span style="background:#0366d6;color:white;padding:2px 8px;border-radius:10px;font-size:12px;">Anomaly: ${(doc.anomaly_score * 100).toFixed(0)}%</span>`;
+                            }
+                            if (doc.root_cause) details += `<div style="margin-top:8px;"><strong>RCA:</strong> ${doc.root_cause.substring(0, 300)}${doc.root_cause.length > 300 ? '...' : ''}</div>`;
+                            if (doc.root_cause_analysis) details += `<div style="margin-top:8px;"><strong>RCA:</strong> ${doc.root_cause_analysis.substring(0, 300)}${doc.root_cause_analysis.length > 300 ? '...' : ''}</div>`;
+                            if (doc.detected_at) details += `<div style="margin-top:4px; font-size:12px; color:#888;">Detected: ${new Date(doc.detected_at).toLocaleString()}</div>`;
+                        } else if (indexName === 'runbooks') {
+                            title = doc.title || doc.name || `Runbook ${i+1}`;
+                            if (doc.category) badges += `<span style="background:#28a745;color:white;padding:2px 8px;border-radius:10px;font-size:12px;">${doc.category}</span>`;
+                            if (doc.content) details += `<div style="margin-top:8px; color:#555;">${doc.content.substring(0, 200)}${doc.content.length > 200 ? '...' : ''}</div>`;
+                        } else if (indexName === 'correlation-patterns') {
+                            title = doc.pattern_id || `Pattern ${i+1}`;
+                            const conf = doc.correlation_confidence;
+                            const confColor = conf >= 0.85 ? '#28a745' : conf >= 0.5 ? '#ffc107' : '#dc3545';
+                            badges += `<span style="background:${confColor};color:white;padding:2px 8px;border-radius:10px;font-size:12px;margin-right:5px;">Confidence: ${(conf * 100).toFixed(1)}%</span>`;
+                            if (doc.source_systems) badges += `<span style="background:#0366d6;color:white;padding:2px 8px;border-radius:10px;font-size:12px;">Sources: ${doc.source_systems.join(', ')}</span>`;
+                            if (doc.times_seen != null) details += `<div style="margin-top:8px;">Seen: ${doc.times_seen} | Confirmed: ${doc.times_confirmed || 0} | Corrected: ${doc.times_corrected || 0}</div>`;
+                            if (doc.stored_analysis && doc.stored_analysis.root_cause) details += `<div style="margin-top:4px;"><strong>RCA:</strong> ${doc.stored_analysis.root_cause.substring(0, 300)}</div>`;
+                        }
+
+                        card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:flex-start;"><strong style="color:#333;">${title}</strong><div>${badges}</div></div>${details}`;
+                        docsEl.appendChild(card);
+                    });
+                    resultsEl.style.display = 'block';
+                })
+                .catch(err => {
+                    loadingEl.style.display = 'none';
+                    errorEl.textContent = `Failed to query: ${err.message}`;
+                    errorEl.style.display = 'block';
                 });
         }
 

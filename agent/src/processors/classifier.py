@@ -92,12 +92,15 @@ class SeverityClassifier:
 
         Args:
             analyzed_events: Events with anomaly scores from AnomalyDetector
-            context: Optional context for classification
+            context: Optional context for classification (may include skip_ai, rag_priority)
 
         Returns:
             List of Incident objects with assigned priorities
         """
         incidents = []
+        context = context or {}
+        skip_ai = context.get("skip_ai", False)
+        rag_priority_str = context.get("rag_priority")
 
         # Group related events into potential incidents
         incident_groups = self._group_into_incidents(analyzed_events)
@@ -106,11 +109,17 @@ class SeverityClassifier:
             # Calculate base priority from rules
             priority = self._rule_based_classification(group)
 
-            # Optionally refine with AI
-            if self.use_ai and len(group) > 0:
+            if skip_ai and rag_priority_str:
+                # RAG fast path: use stored priority instead of calling Bedrock
+                try:
+                    rag_priority = Priority(rag_priority_str)
+                    priority = self._more_severe(priority, rag_priority)
+                except ValueError:
+                    pass  # Invalid priority string, keep rule-based
+            elif self.use_ai and len(group) > 0:
+                # Standard path: refine with AI
                 try:
                     ai_priority = await self._ai_classification(group, context)
-                    # Take the more severe classification
                     priority = self._more_severe(priority, ai_priority)
                 except Exception as e:
                     print(f"AI classification error: {e}")

@@ -15,6 +15,8 @@ from datetime import datetime
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
 import boto3
+from opensearchpy import OpenSearch, RequestsHttpConnection
+from requests_aws4auth import AWS4Auth
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'monitoring-dashboard-secret'
@@ -22,6 +24,29 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # AWS clients
 cloudwatch = boto3.client('cloudwatch', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
+
+# OpenSearch client — fresh credentials on each call (IRSA tokens rotate)
+def get_opensearch_client():
+    endpoint = os.environ.get('OPENSEARCH_ENDPOINT', '')
+    if not endpoint:
+        return None
+    region = os.environ.get('AWS_REGION', 'us-east-1')
+    session = boto3.Session()
+    credentials = session.get_credentials().get_frozen_credentials()
+    auth = AWS4Auth(
+        credentials.access_key,
+        credentials.secret_key,
+        region,
+        'es',
+        session_token=credentials.token,
+    )
+    return OpenSearch(
+        hosts=[{'host': endpoint, 'port': 443}],
+        http_auth=auth,
+        use_ssl=True,
+        verify_certs=True,
+        connection_class=RequestsHttpConnection,
+    )
 
 # Available alarm scenarios
 ALARM_SCENARIOS = [
@@ -177,6 +202,52 @@ def reset_alarms():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/rag-data')
+def get_rag_data():
+    """Query OpenSearch indices to show RAG knowledge base contents."""
+    client = get_opensearch_client()
+    if not client:
+        return jsonify({'error': 'OpenSearch not configured (OPENSEARCH_ENDPOINT not set)'}), 503
+
+    index_name = request.args.get('index', 'case-history')
+    allowed_indices = ['runbooks', 'case-history', 'correlation-patterns']
+    if index_name not in allowed_indices:
+        return jsonify({'error': f'Index must be one of: {allowed_indices}'}), 400
+
+    try:
+        # Check if index exists
+        if not client.indices.exists(index=index_name):
+            return jsonify({'index': index_name, 'exists': False, 'count': 0, 'documents': []})
+
+        # Get document count
+        count = client.count(index=index_name)['count']
+
+        # Fetch recent documents (exclude embedding vectors for readability)
+        body = {
+            'size': 20,
+            'sort': [{'_score': 'desc'}],
+            '_source': {'excludes': ['*embedding*', '*vector*', 'title_embedding']},
+            'query': {'match_all': {}}
+        }
+        result = client.search(index=index_name, body=body)
+
+        documents = []
+        for hit in result['hits']['hits']:
+            doc = hit['_source']
+            doc['_id'] = hit['_id']
+            doc['_score'] = hit.get('_score')
+            documents.append(doc)
+
+        return jsonify({
+            'index': index_name,
+            'exists': True,
+            'count': count,
+            'documents': documents
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 def get_agent_status():
     """Get monitoring agent pod status."""
     try:
@@ -240,27 +311,29 @@ def execute_scenario(scenario):
     # Get baseline log line count to detect new output
     try:
         baseline_result = subprocess.run(
-            ['kubectl', 'logs', '-n', 'monitoring', '-l', 'app=monitoring-agent', '--tail=5'],
+            ['kubectl', 'logs', '-n', 'monitoring', '-l', 'app=monitoring-agent', '--tail=50'],
             capture_output=True, text=True, timeout=10
         )
-        baseline_lines = set(baseline_result.stdout.strip().split('\n'))
+        baseline_log_count = len(baseline_result.stdout.strip().split('\n'))
     except:
-        baseline_lines = set()
+        baseline_log_count = 0
     
     collection_detected = False
-    for i in range(18):  # Poll for up to 90 seconds
+    for i in range(30):  # Poll for up to 150 seconds (covers 2+ agent cycles)
         eventlet.sleep(5)
         
         try:
             result = subprocess.run(
-                ['kubectl', 'logs', '-n', 'monitoring', '-l', 'app=monitoring-agent', '--tail=30'],
+                ['kubectl', 'logs', '-n', 'monitoring', '-l', 'app=monitoring-agent', '--tail=50'],
                 capture_output=True, text=True, timeout=10
             )
             
-            for line in result.stdout.split('\n'):
+            all_lines = result.stdout.strip().split('\n')
+            # Only look at lines that appeared after our baseline
+            new_lines = all_lines[baseline_log_count:] if baseline_log_count < len(all_lines) else all_lines
+            
+            for line in new_lines:
                 line = line.strip()
-                if line in baseline_lines:
-                    continue
                 if 'events from alarms' in line and 'Collected' in line:
                     match = re.search(r'Collected (\d+) events from alarms', line)
                     if match and int(match.group(1)) > 0:
@@ -278,44 +351,86 @@ def execute_scenario(scenario):
     if not collection_detected:
         emit_step(scenario_id, 'collection', '⚠ Collection not yet detected in logs - agent will process on next cycle', 'warning')
     
-    # Step 4: Wait for AI analysis
-    emit_step(scenario_id, 'analysis', 'Waiting for AI analysis and classification...', 'info')
+    # Step 4: Wait for RAG context retrieval and confidence check
+    emit_step(scenario_id, 'rag_check', 'Querying OpenSearch for similar past incidents (RAG)...', 'info')
+    
+    rag_resolved = False
+    rag_checked = False
+    for i in range(6):  # Up to 30s for RAG retrieval
+        eventlet.sleep(5)
+        try:
+            result = subprocess.run(
+                ['kubectl', 'logs', '-n', 'monitoring', '-l', 'app=monitoring-agent', '--tail=50'],
+                capture_output=True, text=True, timeout=10
+            )
+            all_lines = result.stdout.strip().split('\n')
+            new_lines = all_lines[baseline_log_count:] if baseline_log_count < len(all_lines) else all_lines
+            for line in new_lines:
+                line = line.strip()
+                if 'Retrieved' in line and 'runbooks' in line and 'similar incidents' in line:
+                    emit_step(scenario_id, 'rag_check', f'✓ {line}', 'success')
+                    rag_checked = True
+                if 'RAG fast path' in line and 'score' in line:
+                    emit_step(scenario_id, 'rag_check', f'✓ {line}', 'success')
+                    rag_resolved = True
+                if 'RAG-resolved' in line:
+                    emit_step(scenario_id, 'rag_check', f'✓ {line}', 'success')
+                    emit_step(scenario_id, 'rag_check', '✓ Confidence above threshold — skipping Bedrock, using stored RCA', 'success')
+                    rag_resolved = True
+            if rag_checked or rag_resolved:
+                break
+        except:
+            pass
+    
+    if not rag_checked and not rag_resolved:
+        emit_step(scenario_id, 'rag_check', '⚠ RAG retrieval not detected in logs yet', 'warning')
+    
+    # Step 5: Wait for analysis (Bedrock or RAG-resolved)
+    if rag_resolved:
+        emit_step(scenario_id, 'analysis', '✓ Using RAG fast path — no Bedrock calls needed', 'success')
+    else:
+        emit_step(scenario_id, 'analysis', 'Confidence below threshold — sending to Amazon Bedrock for analysis...', 'info')
     
     analysis_detected = False
     for i in range(12):  # Up to 60s for Opus to respond
         eventlet.sleep(5)
         try:
             result = subprocess.run(
-                ['kubectl', 'logs', '-n', 'monitoring', '-l', 'app=monitoring-agent', '--tail=30'],
+                ['kubectl', 'logs', '-n', 'monitoring', '-l', 'app=monitoring-agent', '--tail=50'],
                 capture_output=True, text=True, timeout=10
             )
-            for line in result.stdout.split('\n'):
+            all_lines = result.stdout.strip().split('\n')
+            new_lines = all_lines[baseline_log_count:] if baseline_log_count < len(all_lines) else all_lines
+            for line in new_lines:
                 line = line.strip()
-                if line in baseline_lines:
-                    continue
                 if 'Analyzed' in line and 'anomalies detected' in line:
                     emit_step(scenario_id, 'analysis', f'✓ {line}', 'success')
                     analysis_detected = True
+                if 'RAG-resolved' in line and 'events' in line:
+                    emit_step(scenario_id, 'analysis', f'✓ {line}', 'success')
+                    analysis_detected = True
                 if 'Classified' in line and 'incidents' in line:
+                    emit_step(scenario_id, 'analysis', f'✓ {line}', 'success')
+                if 'RAG-resolved' in line and 'incidents' in line:
                     emit_step(scenario_id, 'analysis', f'✓ {line}', 'success')
             if analysis_detected:
                 break
         except:
             pass
     
-    # Step 5: Check notifications
+    # Step 6: Check notifications
     emit_step(scenario_id, 'notification', 'Checking notification status...', 'info')
     eventlet.sleep(5)
     
     try:
         result = subprocess.run(
-            ['kubectl', 'logs', '-n', 'monitoring', '-l', 'app=monitoring-agent', '--tail=30'],
+            ['kubectl', 'logs', '-n', 'monitoring', '-l', 'app=monitoring-agent', '--tail=50'],
             capture_output=True, text=True, timeout=10
         )
-        for line in result.stdout.split('\n'):
+        all_lines = result.stdout.strip().split('\n')
+        new_lines = all_lines[baseline_log_count:] if baseline_log_count < len(all_lines) else all_lines
+        for line in new_lines:
             line = line.strip()
-            if line in baseline_lines:
-                continue
             if 'Sent' in line and 'notifications' in line:
                 match = re.search(r'Sent (\d+) notifications', line)
                 if match and int(match.group(1)) > 0:
@@ -324,7 +439,7 @@ def execute_scenario(scenario):
     except Exception as e:
         emit_step(scenario_id, 'notification', f'Error: {str(e)}', 'error')
     
-    # Step 6: Complete
+    # Step 7: Complete
     emit_step(scenario_id, 'complete', f'✓ Scenario "{scenario["name"]}" completed!', 'success')
     emit_step(scenario_id, 'complete', 'Check your email for the incident notification', 'info')
     print(f"[SCENARIO] Completed execution for: {scenario['name']}")

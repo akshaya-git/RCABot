@@ -3,3 +3,5 @@ flask-socketio==5.3.5
 boto3==1.34.34
 python-socketio==5.11.0
 eventlet==0.35.2
+opensearch-py==2.4.2
+requests-aws4auth==1.2.3

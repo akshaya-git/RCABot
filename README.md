@@ -5,49 +5,69 @@ AI-powered monitoring agent that continuously watches AWS CloudWatch for anomali
 ## How It Works
 
 ```
-                          ┌───────────────────┐
-                          │    CloudWatch     │
-                          │  Alarms / Metrics │
-                          └─────────┬─────────┘
-                                    │
-                                    ▼
-┌───────────────────────────────────────────────────┐ ┌─────────────────────────────────┐
-│                  Monitoring Agent                 │ │   Amazon Bedrock (Claude)       │
-│                                                   │ │                                 │
-│  1. Collectors (poll every 60s)                   │ │ Call 1 (Anomaly Detector):      │
-│                  │                                │ │   • Anomaly detection           │
-│                  ▼                                │ │   • Root cause analysis         │
-│  2. Query OpenSearch for RAG context              │ │   • Recommended actions         │
-│                  │                                │ │                                 │
-│                  ▼                                │ │ Call 2 (Classifier):            │
-│  3. Send events + context  ◀─────────────────────▶│ │   • AI severity (P1-P6)         │
-│     (alarms, metrics, thresholds,                 │ │                                 │
-│      affected resources) + RAG context            │ └─────────────────────────────────┘
-│                  │                                │
-│                  ▼                                │
-│  4. Classify: run rule-based classification       │
-│     (anomaly scores + category + keywords)        │
-│     and compare with AI classification from       │
-│     Bedrock — take the more severe of the two     │
-│                  │                                │
-│      ┌───────────┼──────────────┐                 │
-│      ▼           ▼              ▼                 │
-│ ┌──────────┐ ┌──────────┐ ┌─────────────────┐     │
-│ │SNS Email │ │ServiceNow│ │Store in         │     │
-│ │(RCA      │ │          │ │OpenSearch       │     │
-│ │ alert)   │ │P1-P3:open│ │(future RAG)     │     │
-│ │          │ │P4-P6:auto│ │                 │     │
-│ │          │ │  closed  │ │                 │     │
-│ └──────────┘ └──────────┘ └─────────────────┘     │
-│                                                   │
-└───────────────────────────────────────────────────┘
+                                  ┌─────────────────────┐
+                                  │     CloudWatch      │
+                                  │   Alarms / Metrics  │
+                                  └──────────┬──────────┘
+                                             │
+                                             ▼
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                            Monitoring Agent                                    │
+│                                                                                │
+│   1. Collectors (poll every 60s)                                               │
+│                       │                                                        │
+│                       ▼                                                        │
+│   2. Query OpenSearch for similar past incidents & runbooks                     │
+│                       │                                                        │
+│                       ▼                                                        │
+│   3. Check RAG confidence score                                                │
+│                       │                                                        │
+│            ┌──────────┴──────────┐                                             │
+│            ▼                     ▼                                             │
+│   ┌─────────────────┐  ┌─────────────────────────────────┐                     │
+│   │ Score >= thresh  │  │ Score < thresh (or disabled)    │                     │
+│   │                  │  │                                 │                     │
+│   │  RAG Fast Path   │  │  Standard Path                  │                     │
+│   │                  │  │                                 │                     │
+│   │  Reuse stored:   │  │  ┌───────────────────────────┐  │                     │
+│   │  • RCA           │  │  │  Amazon Bedrock (Claude)  │  │                     │
+│   │  • Actions       │  │  │                           │  │                     │
+│   │  • Priority      │  │  │  Call 1 (Anomaly):        │  │                     │
+│   │    (compared     │  │  │   • Anomaly detection     │  │                     │
+│   │    with rule-    │  │  │   • Root cause analysis   │  │                     │
+│   │    based, take   │  │  │   • Recommended actions   │  │                     │
+│   │    more severe)  │  │  │                           │  │                     │
+│   │                  │  │  │  Call 2 (Classifier):     │  │                     │
+│   │  Skip Bedrock    │  │  │   • AI severity (P1-P6)   │  │                     │
+│   │                  │  │  │   • Compare with rules    │  │                     │
+│   └────────┬─────────┘  │  └─────────────┬─────────────┘  │                     │
+│            │            │                │                │                     │
+│            │            └────────────────┘                │                     │
+│            │                      │                       │                     │
+│            └──────────┬───────────┘                       │                     │
+│                       │                                                        │
+│                       ▼                                                        │
+│            ┌──────────┼──────────┐                                             │
+│            ▼          ▼          ▼                                             │
+│      ┌──────────┐ ┌─────────┐ ┌──────────────┐                                │
+│      │SNS Email │ │Service  │ │ Store in     │                                │
+│      │(RCA      │ │Now      │ │ OpenSearch   │                                │
+│      │ alert)   │ │         │ │ (future RAG) │                                │
+│      │          │ │P1-P3:   │ │              │                                │
+│      │          │ │  open   │ │              │                                │
+│      │          │ │P4-P6:   │ │              │                                │
+│      │          │ │  closed │ │              │                                │
+│      └──────────┘ └─────────┘ └──────────────┘                                │
+│                                                                                │
+└────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 1. Collectors inside the agent poll CloudWatch alarms and metrics every 60s (configurable). Alarm history is also checked so transient alarms that revert to OK are still caught.
-2. The agent queries OpenSearch for similar past incidents and runbooks (RAG context)
-3. The agent makes two Bedrock calls — first for anomaly detection + root cause analysis + recommended actions, then for AI severity classification (P1-P6)
-4. The agent also runs rule-based classification using anomaly scores, event categories, and keyword matching — then takes the more severe of rule-based vs AI classification as the final severity
-5. The agent acts on the final classification:
+2. The agent queries OpenSearch for similar past incidents and runbooks (RAG context), each result includes a confidence score
+3. The agent checks the top RAG match score against `RAG_CONFIDENCE_THRESHOLD` (configurable, default 0.0 = disabled):
+   - **Score >= threshold (RAG fast path):** Reuses the stored RCA, recommended actions, and priority from the past incident. Skips both Bedrock calls. Rule-based classification still runs and the more severe priority wins.
+   - **Score < threshold (standard path):** Sends events + RAG context to Amazon Bedrock for anomaly detection, RCA, and AI classification. Rule-based classification also runs and the more severe priority wins.
+4. The agent acts on the final classification:
    - Creates ServiceNow tickets (P1-P3 stay open, P4-P6 are auto-closed)
    - Sends email notifications via SNS with detailed RCA
    - Stores the completed incident back into OpenSearch for future RAG learning
@@ -140,3 +160,4 @@ Key parameters:
 - `CLOUDWATCH_NAMESPACES` — which AWS services to monitor
 - `SERVICENOW_INSTANCE` — ServiceNow instance for ticket creation
 - `NOTIFICATION_EMAILS` — email addresses for SNS alerts
+- `RAG_CONFIDENCE_THRESHOLD` — cosine similarity score (0.0-1.0) above which the agent reuses stored RCA instead of calling Bedrock. Default 0.0 (disabled). Recommended starting value: 0.85-0.92

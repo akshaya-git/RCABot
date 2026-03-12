@@ -38,6 +38,10 @@ class Config:
         self.sns_topic_arn = os.getenv("SNS_TOPIC_ARN", "")
         self.notification_emails = os.getenv("NOTIFICATION_EMAILS", "").split(",")
 
+        # RAG Confidence Threshold (0.0-1.0)
+        # If a past incident matches above this score, skip Bedrock and reuse stored RCA
+        self.rag_confidence_threshold = float(os.getenv("RAG_CONFIDENCE_THRESHOLD", "0.0"))
+
         # Application Configuration
         self.host = os.getenv("HOST", "0.0.0.0")
         self.port = int(os.getenv("PORT", "8080"))
@@ -74,6 +78,7 @@ class Config:
                 "opensearch_endpoint": self.opensearch_endpoint,
                 "region": self.region,
             },
+            "rag_confidence_threshold": self.rag_confidence_threshold,
             "s3_rag": {
                 "enabled": bool(self.rag_s3_bucket),
                 "bucket": self.rag_s3_bucket,

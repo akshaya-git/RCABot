@@ -336,6 +336,8 @@ class RAGRetriever:
                 "resolution": incident.get("resolution", ""),
                 "recommended_actions": incident.get("recommended_actions", []),
                 "affected_resources": incident.get("affected_resources", []),
+                "anomaly_score": incident.get("anomaly_score", {}).get("score") if incident.get("anomaly_score") else None,
+                "confidence": incident.get("anomaly_score", {}).get("confidence") if incident.get("anomaly_score") else None,
                 "embedding": embedding,
                 "indexed_at": datetime.now(timezone.utc).isoformat(),
                 "detected_at": incident.get("detected_at", ""),

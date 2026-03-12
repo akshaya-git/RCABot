@@ -28,6 +28,8 @@ spec:
           value: "${AWS_REGION}"
         - name: AWS_DEFAULT_REGION
           value: "${AWS_REGION}"
+        - name: OPENSEARCH_ENDPOINT
+          value: "${OPENSEARCH_ENDPOINT}"
         resources:
           requests:
             memory: "256Mi"
